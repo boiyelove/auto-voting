@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Automated Voting System with Lambda'
+
+Parameters:
+  ScheduleExpression:
+    Type: String
+    Default: 'rate(2 minutes)'
+    Description: 'Schedule expression for running the voting function'
+  
+  BucketName:
+    Type: String
+    Description: 'Name of the S3 bucket for screenshots'
+    Default: 'voting-screenshots-102014306014'
+
+Resources:
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                Resource: !Sub 'arn:aws:s3:::${BucketName}/*'
+
+  ChromeLayer:
+    Type: 'AWS::Lambda::LayerVersion'
+    Properties:
+      LayerName: chrome-selenium
+      Description: Layer containing Chrome and Selenium
+      Content:
+        S3Bucket: !Ref BucketName
+        S3Key: selenium_layer.zip
+      CompatibleRuntimes:
+        - python3.9
+      CompatibleArchitectures:
+        - x86_64
+
+  VotingFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: ChromeLayer
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-voting-function'
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref BucketName
+        S3Key: lambda_deployment_package.zip
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 2048
+      Environment:
+        Variables:
+          SCREENSHOT_BUCKET: !Ref BucketName
+          PYTHONPATH: /opt/python
+      Layers:
+        - !Ref ChromeLayer
+
+  VotingScheduleRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Schedule for running the voting function'
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt VotingFunction.Arn
+          Id: VotingScheduleTarget
+
+  PermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref VotingFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt VotingScheduleRule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref VotingFunction
+
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt VotingFunction.Arn
