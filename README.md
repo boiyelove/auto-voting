@@ -1,6 +1,6 @@
 # Auto Voting
 
-This directory contains scripts and utilities for automating voting for SEN. SANI MUSA on the Democracy Heroes Award website.
+This directory contains scripts and utilities for automating voting on websites that use WordPress Polls.
 
 ## Files
 
@@ -10,6 +10,7 @@ This directory contains scripts and utilities for automating voting for SEN. SAN
 - `check_voting_status.py`: Script to check the status of voting attempts
 - `check_website.py`: Script to check if the website is accessible
 - `monitor_and_trigger.py`: Script to monitor the website and trigger the Lambda function when accessible
+- `trigger_multiple.py`: Script to trigger multiple Lambda invocations simultaneously
 
 ### Deployment Files
 - `lambda_deployment_package.zip`: Deployment package for the Lambda function
@@ -21,9 +22,6 @@ This directory contains scripts and utilities for automating voting for SEN. SAN
 ### CloudFormation Templates
 - `bucket-stack.yaml`: CloudFormation template for S3 bucket creation
 - `voting-stack.yaml`: CloudFormation template for Lambda function and related resources
-
-### Other Files
-- `response.json`: Sample response from Lambda function
 
 ## Setup
 
@@ -39,24 +37,43 @@ This directory contains scripts and utilities for automating voting for SEN. SAN
    aws configure
    ```
 
+## Configuration
+
+The scripts are designed to be configurable. You need to set the following parameters:
+
+- `VOTING_URL`: The URL of the voting page
+- `TARGET_CANDIDATE`: The name of the candidate to vote for
+
+These can be set as environment variables for the Lambda function or passed as command-line arguments to the local scripts.
+
 ## Usage
 
 ### Local Voting Automation
 
 ```bash
 source venv/bin/activate
-python vote_automation.py
+python vote_automation.py --url "https://example.com/voting-page/" --candidate "CANDIDATE NAME" --attempts 5
 ```
+
+Options:
+- `--url`: URL of the voting page
+- `--candidate`: Name of the candidate to vote for
+- `--attempts`: Number of voting attempts (default: 5)
+- `--retries`: Maximum retries per attempt (default: 2)
+- `--proxy`: Use proxy servers (default: True)
+- `--no-proxy`: Do not use proxy servers
+- `--incognito`: Use incognito mode (default: True)
+- `--no-incognito`: Do not use incognito mode
 
 ### Check Website Accessibility
 
 ```bash
 source venv/bin/activate
-python check_website.py --timeout 10 --interval 5 --count 3
+python check_website.py --url "https://example.com/voting-page/" --timeout 10 --interval 5 --count 3
 ```
 
 Options:
-- `--url`: URL to check (default: https://democracyheroesaward.com/iconic-senator-of-the-year/)
+- `--url`: URL to check
 - `--timeout`: Timeout in seconds (default: 5)
 - `--interval`: Interval between checks in seconds (default: 60)
 - `--count`: Number of checks to perform (default: 5)
@@ -65,39 +82,54 @@ Options:
 
 ```bash
 source venv/bin/activate
-python check_voting_status.py --hours 24
+python check_voting_status.py --bucket "your-bucket-name" --hours 24
 ```
 
 Options:
-- `--bucket`: S3 bucket name (default: voting-screenshots-102014306014)
+- `--bucket`: S3 bucket name
 - `--hours`: Number of hours to look back (default: 24)
 
 ### Monitor Website and Trigger Lambda
 
 ```bash
 source venv/bin/activate
-python monitor_and_trigger.py --interval 300
+python monitor_and_trigger.py --url "https://example.com/voting-page/" --interval 300 --function-name "your-lambda-function"
 ```
 
 Options:
-- `--url`: URL to check (default: https://democracyheroesaward.com/iconic-senator-of-the-year/)
+- `--url`: URL to check
 - `--timeout`: Timeout in seconds (default: 5)
 - `--interval`: Interval between checks in seconds (default: 300)
-- `--function-name`: Lambda function name (default: voting-automation-voting-function)
+- `--function-name`: Lambda function name
+
+### Trigger Multiple Lambda Invocations
+
+```bash
+source venv/bin/activate
+python trigger_multiple.py --function-name "your-lambda-function" --count 15
+```
+
+Options:
+- `--function-name`: Lambda function name
+- `--count`: Number of invocations (default: 15)
 
 ## Deployment
 
-1. Create the S3 bucket:
+1. Update the CloudFormation templates with your configuration:
+   - Edit `bucket-stack.yaml` to set your bucket name
+   - Edit `voting-stack.yaml` to set your voting URL and target candidate
+
+2. Create the S3 bucket:
    ```bash
    aws cloudformation deploy --template-file bucket-stack.yaml --stack-name voting-bucket-stack
    ```
 
-2. Create the Selenium layer:
+3. Create the Selenium layer:
    ```bash
    ./create_selenium_layer.sh
    ```
 
-3. Deploy the Lambda function and related resources:
+4. Deploy the Lambda function and related resources:
    ```bash
    ./deploy.sh
    ```
@@ -106,9 +138,9 @@ Options:
 
 The auto voting system uses the following AWS resources:
 
-- Lambda function (`voting-automation-voting-function`)
-- CloudWatch Event rule (`voting-automation-trigger`)
-- S3 bucket (`voting-screenshots-102014306014`)
+- Lambda function
+- CloudWatch Event rule
+- S3 bucket
 - IAM role for Lambda execution
 
 ## Lambda Function
@@ -117,7 +149,7 @@ The Lambda function performs the following steps:
 
 1. Checks if the website is accessible
 2. If accessible, opens the voting page
-3. Finds the option for SEN. SANI MUSA
+3. Finds the option for the target candidate
 4. Submits the vote
 5. Saves screenshots and logs to S3
 
@@ -133,5 +165,5 @@ Common issues:
 ## Notes
 
 - The website may be experiencing technical issues or may be down
-- The Lambda function will continue to attempt to vote every hour
+- The Lambda function will continue to attempt to vote according to the schedule
 - The `monitor_and_trigger.py` script can be used to trigger the Lambda function when the website becomes accessible

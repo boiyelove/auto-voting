@@ -22,14 +22,19 @@ socket.setdefaulttimeout(3)
 def lambda_handler(event, context):
     """Lambda handler function"""
     try:
-        # Get S3 bucket from environment variable
+        # Get environment variables
         s3_bucket = os.environ.get('SCREENSHOT_BUCKET')
+        voting_url = os.environ.get('VOTING_URL', 'https://example.com/voting-page/')
+        target_candidate = os.environ.get('TARGET_CANDIDATE', 'CANDIDATE NAME')
+        
         if not s3_bucket:
             raise ValueError("SCREENSHOT_BUCKET environment variable not set")
         
         # Log Lambda execution details
         logger.info(f"Lambda function invoked with remaining time: {context.get_remaining_time_in_millis()} ms")
         logger.info(f"Memory limit: {context.memory_limit_in_mb} MB")
+        logger.info(f"Target URL: {voting_url}")
+        logger.info(f"Target candidate: {target_candidate}")
         
         # Record the execution
         execution_id = str(uuid.uuid4())[:8]
@@ -45,7 +50,7 @@ def lambda_handler(event, context):
         save_json_to_s3(status_report, s3_bucket, f'reports/{execution_id}_start.json')
         
         # Check if the website is accessible
-        website_status = check_website_status("https://democracyheroesaward.com/iconic-senator-of-the-year/")
+        website_status = check_website_status(voting_url)
         if website_status != 200:
             logger.warning(f"Website is not accessible: {website_status}")
             
@@ -84,7 +89,7 @@ def lambda_handler(event, context):
         for attempt in range(max_retries):
             try:
                 logger.info(f"Attempt {attempt + 1} of {max_retries}")
-                success = vote_with_urllib(s3_bucket, execution_id)
+                success = vote_with_urllib(s3_bucket, execution_id, voting_url, target_candidate)
                 if success:
                     break
                 time.sleep(1)  # Wait 1 second between attempts
@@ -184,7 +189,7 @@ def save_json_to_s3(data, bucket_name, file_name):
     except Exception as e:
         logger.error(f"Error saving JSON to S3: {e}")
 
-def vote_with_urllib(s3_bucket, execution_id):
+def vote_with_urllib(s3_bucket, execution_id, voting_url, target_candidate):
     """Attempt to vote using urllib"""
     run_id = str(uuid.uuid4())[:8]  # Generate a unique ID for this run
     
@@ -196,11 +201,15 @@ def vote_with_urllib(s3_bucket, execution_id):
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
         ]
         
+        # Extract domain for referer
+        domain_match = re.match(r'https?://([^/]+)', voting_url)
+        referer = f"https://{domain_match.group(1)}/" if domain_match else voting_url
+        
         headers = {
             'User-Agent': random.choice(user_agents),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://democracyheroesaward.com/',
+            'Referer': referer,
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Cache-Control': 'max-age=0',
@@ -208,7 +217,7 @@ def vote_with_urllib(s3_bucket, execution_id):
         
         # Step 1: Visit the voting page to get cookies and form data
         logger.info(f"Run {run_id}: Opening website")
-        url = "https://democracyheroesaward.com/iconic-senator-of-the-year/"
+        url = voting_url
         
         # Create a request with headers
         req = urllib.request.Request(url, headers=headers)
@@ -243,8 +252,7 @@ def vote_with_urllib(s3_bucket, execution_id):
             logger.error(f"Run {run_id}: Could not find any voting options")
             return False
         
-        # Choose SEN. SANI MUSA as the target candidate
-        target_candidate = "SEN. SANI MUSA"
+        # Choose the target candidate
         option_value = None
         
         for match in option_matches:

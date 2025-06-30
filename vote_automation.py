@@ -13,7 +13,8 @@ import re
 import os
 import requests
 import json
-from fake_useragent import UserAgent
+import argparse
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(
@@ -128,11 +129,13 @@ def is_vote_successful(driver):
         logging.error(f"Error checking vote success: {e}")
         return False
 
-def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
+def vote_once(voting_url, target_candidate, max_retries=3, use_proxy=True, use_incognito=True):
     """
     Attempt to vote once with retry logic for handling errors
     
     Args:
+        voting_url: URL of the voting page
+        target_candidate: Name of the candidate to vote for
         max_retries: Maximum number of retry attempts for this voting session
         use_proxy: Whether to use proxy servers
         use_incognito: Whether to use incognito mode
@@ -142,6 +145,9 @@ def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
     """
     retry_count = 0
     proxies = get_free_proxies() if use_proxy else []
+    
+    logging.info(f"Voting for candidate: {target_candidate}")
+    logging.info(f"Voting URL: {voting_url}")
     
     while retry_count <= max_retries:
         # Setup Chrome options
@@ -201,7 +207,7 @@ def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
             
             # Open the website
             logging.info(f"Opening website (attempt {retry_count + 1}/{max_retries + 1})")
-            driver.get("https://democracyheroesaward.com/iconic-senator-of-the-year/")
+            driver.get(voting_url)
             
             # Wait for the page to fully load with increased timeout
             wait = WebDriverWait(driver, 45)  # Increased timeout
@@ -243,61 +249,78 @@ def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
                 else:
                     return True
             
-            # Try to find the voting option with more robust approach
+            # Find all voting options
             try:
-                logging.info("Looking for voting option")
-                voting_option_xpaths = [
-                    "/html/body/div/div/div/div/main/article/div/div/div[3]/div[2]/div/div/div/div[1]/form/div/ul/li[4]/label",
-                    "//form[contains(@id, 'polls')]//li[4]//label",
-                    "//div[contains(@class, 'wp-polls')]//li[4]//label",
-                    "//ul[contains(@class, 'wp-polls-ul')]//li[4]//label"
-                ]
+                logging.info("Looking for voting options")
                 
-                first_element = None
-                for xpath in voting_option_xpaths:
-                    try:
-                        first_element = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-                        logging.info(f"Found voting option using xpath: {xpath}")
-                        break
-                    except:
-                        continue
+                # Find all radio buttons and their labels
+                radio_buttons = driver.find_elements(By.XPATH, "//input[@type='radio']")
                 
-                if not first_element:
-                    # If we can't find the voting option, check if we're seeing results already
+                if not radio_buttons:
+                    logging.warning("No radio buttons found on the page")
+                    
+                    # Check if we're seeing results already
                     if is_vote_successful(driver):
                         logging.info("No voting options found, but results are displayed - vote likely already counted")
                         return True
                     else:
-                        raise Exception("Could not find voting option with any of the provided XPaths")
+                        raise Exception("Could not find any voting options")
+                
+                # Find the option for our target candidate
+                target_option = None
+                
+                for radio in radio_buttons:
+                    try:
+                        # Get the ID of the radio button
+                        radio_id = radio.get_attribute("id")
+                        if not radio_id:
+                            continue
+                            
+                        # Find the associated label
+                        label = driver.find_element(By.XPATH, f"//label[@for='{radio_id}']")
+                        label_text = label.text
+                        
+                        logging.info(f"Found option: {label_text}")
+                        
+                        # Check if this is our target candidate
+                        if target_candidate in label_text:
+                            target_option = radio
+                            logging.info(f"Found target candidate: {label_text}")
+                            break
+                    except Exception as e:
+                        logging.warning(f"Error processing radio button: {e}")
+                        continue
+                
+                # If target candidate not found, choose a random option
+                if not target_option and radio_buttons:
+                    target_option = random.choice(radio_buttons)
+                    logging.info(f"Target candidate not found, using random option")
+                
+                if not target_option:
+                    raise Exception("Could not find any usable voting options")
                 
                 # Scroll to the element to make sure it's in view
-                scroll_to_element(driver, first_element)
-                
-                # Wait for element to be clickable
-                wait.until(EC.element_to_be_clickable((By.XPATH, voting_option_xpaths[0])))
+                scroll_to_element(driver, target_option)
                 
                 # Click with ActionChains for more reliable clicking
                 actions = ActionChains(driver)
-                actions.move_to_element(first_element).click().perform()
+                actions.move_to_element(target_option).click().perform()
                 logging.info("Clicked on voting option")
                 
                 # Wait a bit to ensure the click is registered with random delay
                 time.sleep(random.uniform(2, 4))
                 
-                # Try to find and click the vote button with multiple approaches
-                vote_button_xpaths = [
-                    "//*[@id=\"polls-51-ans\"]/p[1]/input",
-                    "//input[@value='   Vote   ']",
-                    "//input[contains(@class, 'Buttons')]",
-                    "//form[contains(@id, 'polls')]//input[@type='button']"
-                ]
+                # Try to find and click the vote button
+                vote_buttons = driver.find_elements(By.XPATH, "//input[@type='button' or @type='submit']")
                 
                 vote_button = None
-                for xpath in vote_button_xpaths:
+                for button in vote_buttons:
                     try:
-                        vote_button = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-                        logging.info(f"Found vote button using xpath: {xpath}")
-                        break
+                        value = button.get_attribute("value")
+                        if value and ("vote" in value.lower() or "submit" in value.lower()):
+                            vote_button = button
+                            logging.info(f"Found vote button with value: {value}")
+                            break
                     except:
                         continue
                 
@@ -307,7 +330,7 @@ def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
                         logging.info("No vote button found, but results are displayed - vote likely already counted")
                         return True
                     else:
-                        raise Exception("Could not find vote button with any of the provided XPaths")
+                        raise Exception("Could not find vote button")
                 
                 # Scroll to make vote button visible
                 scroll_to_element(driver, vote_button)
@@ -406,10 +429,33 @@ def vote_once(max_retries=3, use_proxy=True, use_incognito=True):
 
 def main():
     """Main function to run the voting process multiple times"""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Automated voting script')
+    parser.add_argument('--url', type=str, default='https://example.com/voting-page/',
+                        help='URL of the voting page')
+    parser.add_argument('--candidate', type=str, default='CANDIDATE NAME',
+                        help='Name of the candidate to vote for')
+    parser.add_argument('--attempts', type=int, default=5,
+                        help='Number of voting attempts')
+    parser.add_argument('--retries', type=int, default=2,
+                        help='Maximum retries per attempt')
+    parser.add_argument('--proxy', action='store_true', default=True,
+                        help='Use proxy servers')
+    parser.add_argument('--no-proxy', dest='proxy', action='store_false',
+                        help='Do not use proxy servers')
+    parser.add_argument('--incognito', action='store_true', default=True,
+                        help='Use incognito mode')
+    parser.add_argument('--no-incognito', dest='incognito', action='store_false',
+                        help='Do not use incognito mode')
+    
+    args = parser.parse_args()
+    
     successful_votes = 0
-    total_attempts = 5
+    total_attempts = args.attempts
     
     logging.info(f"Starting voting automation - {total_attempts} attempts planned")
+    logging.info(f"Target URL: {args.url}")
+    logging.info(f"Target candidate: {args.candidate}")
     
     # Install required packages if not already installed
     try:
@@ -423,7 +469,7 @@ def main():
     for i in range(total_attempts):
         logging.info(f"Running vote attempt {i+1} of {total_attempts}")
         
-        if vote_once(max_retries=2, use_proxy=True, use_incognito=True):
+        if vote_once(args.url, args.candidate, max_retries=args.retries, use_proxy=args.proxy, use_incognito=args.incognito):
             successful_votes += 1
         
         # Wait between attempts with random delay to avoid detection

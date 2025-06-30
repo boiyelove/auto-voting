@@ -4,13 +4,23 @@ Description: 'Automated Voting System with Lambda'
 Parameters:
   ScheduleExpression:
     Type: String
-    Default: 'rate(2 minutes)'
+    Default: 'rate(1 hour)'
     Description: 'Schedule expression for running the voting function'
   
   BucketName:
     Type: String
     Description: 'Name of the S3 bucket for screenshots'
-    Default: 'voting-screenshots-102014306014'
+    Default: 'voting-screenshots'
+  
+  VotingUrl:
+    Type: String
+    Description: 'URL of the voting page'
+    Default: 'https://example.com/voting-page/'
+  
+  TargetCandidate:
+    Type: String
+    Description: 'Name of the candidate to vote for'
+    Default: 'CANDIDATE NAME'
 
 Resources:
   LambdaExecutionRole:
@@ -65,6 +75,8 @@ Resources:
       Environment:
         Variables:
           SCREENSHOT_BUCKET: !Ref BucketName
+          VOTING_URL: !Ref VotingUrl
+          TARGET_CANDIDATE: !Ref TargetCandidate
           PYTHONPATH: /opt/python
       Layers:
         - !Ref ChromeLayer
